@@ -1,10 +1,10 @@
 Audacious Plugins
-#################
+=================
 
 Here's just a few [Audacious](http://audacious-media-player.org/) plugins I've made.
 
 Audacious dynamic filesystem playlist
-=====================================
+-------------------------------------
 
 This tool monitors a given directory for the creation of new media files to feed into your Audacious playlist on the fly.
 
