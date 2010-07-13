@@ -1,3 +1,8 @@
+Audacious Plugins
+#################
+
+Here's just a few [Audacious](http://audacious-media-player.org/) plugins I've made.
+
 Audacious dynamic filesystem playlist
 =====================================
 
