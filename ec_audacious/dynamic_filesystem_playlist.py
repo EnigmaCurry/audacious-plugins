@@ -22,7 +22,10 @@ import os
 import sys
 import fnmatch
 import urllib
+import time
 import logging
+import shlex
+import subprocess
 
 logging.basicConfig()
 logger = logging.getLogger("main")
@@ -33,6 +36,10 @@ class FileEventHandler(pyinotify.ProcessEvent):
         self.file_types = [x.lower() for x in options.file_types.split(",")]
         self.options = options
     def process_IN_CREATE(self, event):
+        self.process(event)
+    def process_IN_MOVED_TO(self, event):
+        self.process(event)
+    def process(self, event):
         for ft in self.file_types:
             if fnmatch.fnmatch(event.pathname.lower(),"*."+ft):
                 break
@@ -41,14 +48,23 @@ class FileEventHandler(pyinotify.ProcessEvent):
         uri = "file://"+urllib.quote(event.pathname)
         if self.options.no_dupes and uri in self.audacious.get_tracklist():
             return
+        #Don't add things in an "incomplete" dir
+        if "incomplete" in event.pathname.split(os.path.sep):
+            return
         logger.info("Adding Track: "+event.pathname)
         #Add the track
-        self.audacious.tracklist.AddTrack(uri,False)
-        #Get the track info, just so the playlist display updates
-        self.audacious.tracklist.GetMetadata(self.audacious.tracklist.GetLength()-1)
+        self.audacious.add_track(uri)
         
 class Audacious(object):
     def __init__(self):
+        try:
+            self.dbus_setup()
+        except dbus.exceptions.DBusException:
+            #Maybe audacious wasn't running, let's start it and try again.
+            subprocess.Popen(shlex.split("sh -c 'audacious &'"))
+            time.sleep(5)
+            self.dbus_setup()
+    def dbus_setup(self):
         self.bus = dbus.SessionBus()
         root_obj       = self.bus.get_object("org.mpris.audacious", '/')
         player_obj     = self.bus.get_object("org.mpris.audacious", '/Player')
@@ -64,8 +80,24 @@ class Audacious(object):
             fn = str(self.tracklist.GetMetadata(x)['location'])
             tracklist_files.add(fn)
         return tracklist_files
-    
-def main():
+    def add_track(self, path):
+        try:
+            self.tracklist.AddTrack(path,False)
+            #Get the track info, just so the playlist display updates
+            self.tracklist.GetMetadata(self.tracklist.GetLength()-1)
+        except dbus.exceptions.DBusException:
+            logger.error("Could not connect to Audacious.. is it running?")
+
+def monitor(options):
+    handler = FileEventHandler(options)
+    wm = pyinotify.WatchManager()
+    notifier = pyinotify.Notifier(wm, handler)
+    path = os.path.abspath(options.path)
+    wm.add_watch(path, pyinotify.IN_CREATE|pyinotify.IN_MOVED_TO, rec=options.recursive)
+    logger.info("Watching %s for new media files of type %s ..." % (path,options.file_types))
+    notifier.loop()
+
+def main(args):
     usage = "%prog [options] PATH_TO_MONITOR"
     description = "Monitors a given PATH for newly created audio files and "\
     "automatically adds them to the audacious tracklist."
@@ -82,21 +114,14 @@ def main():
     parser.add_option("-d","--no-dupes",dest="no_dupes",
                       action="store_true",default=False,
                       help="Only add files not already in the Audacious tracklist")
-    (options, args) = parser.parse_args()
-    if len(args) != 1:
+    (options, pargs) = parser.parse_args(args)
+    if len(pargs) != 2:
         parser.print_help()
         sys.exit(1)
     if not options.quiet:
         logger.setLevel(logging.INFO)
-    options.path = args[0]
-    try:
-        handler = FileEventHandler(options)
-        wm = pyinotify.WatchManager()
-        notifier = pyinotify.Notifier(wm, handler)
-        wm.add_watch(os.path.abspath(options.path), pyinotify.IN_CREATE, rec=options.recursive)
-        logger.info("Watching %s for new media files of type %s ..." % (options.path,options.file_types))
-        notifier.loop()
-    except dbus.exceptions.DBusException:
-        logger.error("Could not connect to Audacious.. is it running?")
+    options.path = pargs[1]
+    monitor(options)
+    
 if __name__ == "__main__":
-    main()
+    main(sys.argv)
